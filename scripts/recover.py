@@ -4,10 +4,15 @@
 
 How Claude Desktop stores Code sessions
 ---------------------------------------
-Every Code session is a small JSON *index* file:
+Every Code session is a small JSON *index* file under the Claude Desktop data
+directory (auto-detected per OS — see _claude_desktop_dir):
 
-    ~/Library/Application Support/Claude/claude-code-sessions/
+    <ClaudeDesktopDir>/claude-code-sessions/
         <accountId>/<groupId>/local_<sessionId>.json
+
+    macOS   : ~/Library/Application Support/Claude
+    Windows : %APPDATA%\\Claude          (…/AppData/Roaming/Claude)
+    Linux   : ~/.config/Claude           ($XDG_CONFIG_HOME/Claude)
 
 * <accountId>  : one folder per login/account.
 * <groupId>    : a "session group" (workspace instance) under that account.
@@ -40,8 +45,11 @@ Usage
     python3 recover.py --undo          # revert the most recent recover
     python3 recover.py --undo-all      # revert every recover this tool did
 
-After --recover: fully quit Claude Desktop (Cmd+Q, not just close window) and
-reopen it, then open the Code tab.
+(On Windows use `python` instead of `python3`.)
+
+After --recover: fully quit Claude Desktop — Cmd+Q on macOS, or quit from the
+system tray on Windows/Linux (closing the window alone is not enough) — then
+reopen it and open the Code tab.
 """
 import argparse
 import datetime
@@ -49,13 +57,82 @@ import glob
 import json
 import os
 import shutil
+import sys
 import time
 
-BASE = os.path.expanduser(
-    "~/Library/Application Support/Claude/claude-code-sessions"
-)
-PROJECTS = os.path.expanduser("~/.claude/projects")
-STATE_DIR = os.path.expanduser("~/.claude/back-to-my-claude")
+
+def _claude_desktop_dir():
+    """Claude Desktop (Electron userData) dir for this OS. May not exist yet.
+
+    macOS   : ~/Library/Application Support/Claude
+    Windows : %APPDATA%\\Claude            (…/AppData/Roaming/Claude)
+    Linux   : $XDG_CONFIG_HOME/Claude      (defaults to ~/.config/Claude)
+    Override with the CLAUDE_DESKTOP_DIR environment variable.
+    """
+    home = os.path.expanduser("~")
+    if os.environ.get("CLAUDE_DESKTOP_DIR"):
+        return os.environ["CLAUDE_DESKTOP_DIR"]
+    if sys.platform == "darwin":
+        return os.path.join(home, "Library", "Application Support", "Claude")
+    if os.name == "nt":
+        appdata = os.environ.get("APPDATA") or os.path.join(home, "AppData", "Roaming")
+        return os.path.join(appdata, "Claude")
+    xdg = os.environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
+    return os.path.join(xdg, "Claude")
+
+
+def _candidate_desktop_dirs():
+    """Best-first list of possible Claude Desktop dirs, for resilient discovery."""
+    home = os.path.expanduser("~")
+    appdata = os.environ.get("APPDATA") or os.path.join(home, "AppData", "Roaming")
+    xdg = os.environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
+    seen, out = set(), []
+    for p in (
+        _claude_desktop_dir(),
+        os.path.join(home, "Library", "Application Support", "Claude"),
+        os.path.join(appdata, "Claude"),
+        os.path.join(xdg, "Claude"),
+    ):
+        if p and p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out
+
+
+def find_base():
+    """Locate .../Claude/claude-code-sessions on any OS.
+
+    Returns the first candidate that actually exists; otherwise the
+    platform-default path (so error messages point somewhere sensible).
+    """
+    for d in _candidate_desktop_dirs():
+        p = os.path.join(d, "claude-code-sessions")
+        if os.path.isdir(p):
+            return p
+    return os.path.join(_claude_desktop_dir(), "claude-code-sessions")
+
+
+def _claude_home():
+    """Claude Code CLI config dir (~/.claude), honoring CLAUDE_CONFIG_DIR."""
+    return os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(
+        os.path.expanduser("~"), ".claude"
+    )
+
+
+def quit_hint():
+    """Platform-appropriate 'fully quit the app' instruction."""
+    if sys.platform == "darwin":
+        return "quit Claude Desktop with Cmd+Q (not just closing the window)"
+    if os.name == "nt":
+        return ("fully exit Claude Desktop: right-click its system-tray icon and "
+                "choose Quit/Exit (closing the window only minimizes it)")
+    return ("fully quit Claude Desktop: close all windows and quit from the tray "
+            "or menu (Ctrl+Q in most builds)")
+
+
+BASE = find_base()
+PROJECTS = os.path.join(_claude_home(), "projects")
+STATE_DIR = os.path.join(_claude_home(), "back-to-my-claude")
 
 
 def fmt(ms):
@@ -205,9 +282,9 @@ def cmd_recover(accounts, current, from_acct, do_write):
         json.dump({"dest": dest, "copied": copied, "ts": time.time()}, f, indent=2)
     print(f"\nCopied {len(copied)} session(s) into the current group.")
     print(f"Manifest: {manifest}")
-    print("\nNEXT: fully quit Claude Desktop with Cmd+Q (not just the window),")
+    print(f"\nNEXT: {quit_hint()},")
     print("      reopen it, and open the Code tab. Your sessions should be in Recents.")
-    print("If they do not appear, run:  python3 recover.py --undo")
+    print("If they do not appear, run the same command with --undo.")
 
 
 def cmd_undo(all_manifests):
@@ -230,7 +307,7 @@ def cmd_undo(all_manifests):
                 removed += 1
         os.rename(mp, mp + ".done")
     print(f"Removed {removed} imported file(s). Originals were never touched.")
-    print("Fully quit (Cmd+Q) and reopen Claude Desktop to refresh the list.")
+    print(f"Then {quit_hint()} and reopen it to refresh the list.")
 
 
 def main():
@@ -254,7 +331,11 @@ def main():
     accounts = scan()
     if not accounts:
         print(f"No Claude Desktop Code sessions found under:\n  {BASE}")
-        print("Is Claude Desktop installed and have you opened the Code tab at least once?")
+        print("\nChecked these locations:")
+        for d in _candidate_desktop_dirs():
+            print(f"  - {os.path.join(d, 'claude-code-sessions')}")
+        print("\nIs Claude Desktop installed, and have you opened the Code tab at least once?")
+        print("If its data lives elsewhere, set CLAUDE_DESKTOP_DIR to that folder.")
         return
     current = newest(accounts)
     if current is None:

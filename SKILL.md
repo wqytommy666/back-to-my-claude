@@ -10,8 +10,8 @@ description: >
   up in Recents again. Trigger on: "recover my Claude Code chats", "找回 claude
   code 对话记录", "another/old account I can't log into", "登录不上了 之前的对话",
   "Code Recents is empty after switching accounts", "bring back my old Claude
-  Desktop conversations". macOS + Claude Desktop only.
-compatibility: requires-macos, requires-claude-desktop
+  Desktop conversations". Works on macOS, Windows, and Linux (Claude Desktop).
+compatibility: requires-claude-desktop
 ---
 
 # Back to My Claude 🔥
@@ -22,12 +22,21 @@ away from or can no longer log into) back into the account you're logged into
 
 ## Why sessions "vanish"
 
-Claude Desktop stores each Code session as a small JSON index file:
+Claude Desktop stores each Code session as a small JSON index file under its
+data directory (the script auto-detects this per OS):
 
 ```
-~/Library/Application Support/Claude/claude-code-sessions/
+<ClaudeDesktopDir>/claude-code-sessions/
     <accountId>/<groupId>/local_<sessionId>.json
 ```
+
+| OS      | `<ClaudeDesktopDir>`                          |
+|---------|-----------------------------------------------|
+| macOS   | `~/Library/Application Support/Claude`         |
+| Windows | `%APPDATA%\Claude` (`…\AppData\Roaming\Claude`)|
+| Linux   | `~/.config/Claude` (`$XDG_CONFIG_HOME/Claude`) |
+
+Override with the `CLAUDE_DESKTOP_DIR` env var if your install differs.
 
 - One `<accountId>` folder **per login/account**.
 - `<groupId>` = a session-group (workspace instance) under that account.
@@ -69,9 +78,16 @@ mtime so imported old sessions never get mistaken for "current".
    <accountId>`.
 
 3. **Tell the user to fully restart the app** — this is required; the list is
-   only re-read on a cold start:
-   > Quit Claude Desktop with **Cmd+Q** (not just closing the window), reopen
-   > it, then open the **Code** tab. The old sessions should be in Recents.
+   only re-read on a cold start. Give the OS-appropriate quit step:
+   > - **macOS:** quit with **Cmd+Q** (not just closing the window)
+   > - **Windows:** right-click the **system-tray** icon → **Quit/Exit** (the ✕
+   >   button only minimizes to tray)
+   > - **Linux:** close all windows and quit from the tray/menu (**Ctrl+Q** in
+   >   most builds)
+   >
+   > Then reopen Claude Desktop and open the **Code** tab. The old sessions
+   > should be in Recents. (The script also prints the right hint for the
+   > detected OS.)
 
 4. If they don't appear, or the user wants to back out:
 
@@ -96,8 +112,8 @@ mtime so imported old sessions never get mistaken for "current".
 - Opened conversations render from `~/.claude/projects/**.jsonl`. A session whose
   transcript is missing will still list but may open empty — the survey reports
   how many imported sessions have a local transcript.
-- This only moves history between **local** accounts on the same Mac. It cannot
-  pull sessions that only ever existed on another device/server. If the real
+- This only moves history between **local** accounts on the same computer. It
+  cannot pull sessions that only ever existed on another device/server. If the real
   goal is to get the account itself back, recovering that login (password reset
   at claude.ai) is the cleaner fix.
 - The Recents list is **not** rebuilt from the account folder at large — only
